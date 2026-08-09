@@ -1,0 +1,237 @@
+<?php
+
+namespace App\Http\Controllers\Api\Employee;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Models\Wallet;
+use App\Models\WalletSettlementRequest;
+use App\Models\WalletTransaction;
+use App\Services\WalletService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+
+
+class WalletController extends Controller
+{
+
+  /**
+     * Online Wallet History
+     */
+    public function walletHistory()
+    {
+        $transactions = WalletTransaction::with(['user', 'lead'])
+            ->where('user_id', Auth::id())
+            ->where('wallet_type', 'online')
+            ->latest()
+            ->paginate(20);
+
+        $walletBalance = Wallet::where('user_id', Auth::id())
+            ->where('wallet_type', 'online')
+            ->value('balance') ?? 0;
+
+        return response()->json([
+            'status' => true,
+            'wallet_balance' => $walletBalance,
+            'transactions' => $transactions,
+        ]);
+    }
+
+    /**
+     * Cash Wallet History
+     */
+    public function walletCashHistory()
+    {
+        $transactions = WalletTransaction::with(['user', 'lead'])
+            ->where('user_id', Auth::id())
+            ->where('wallet_type', 'cash')
+            ->latest()
+            ->paginate(20);
+
+        $walletBalance = Wallet::where('user_id', Auth::id())
+            ->where('wallet_type', 'cash')
+            ->value('balance') ?? 0;
+
+        return response()->json([
+            'status' => true,
+            'wallet_balance' => $walletBalance,
+            'transactions' => $transactions,
+        ]);
+    }
+
+    /**
+     * Send Settlement Request
+     */
+    public function sendSettlementRequest(Request $request)
+    {
+        $request->validate([
+            'amount' => 'required|numeric|min:1',
+            'wallet_type' => 'required|in:online,cash',
+            'remark' => 'nullable|string',
+            'utr_no' => 'nullable|string',
+        ]);
+
+        $wallet = Wallet::where('user_id', Auth::id())
+            ->where('wallet_type', $request->wallet_type)
+            ->first();
+
+        if (!$wallet) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Wallet not found.',
+            ], 404);
+        }
+
+        if ($request->amount > $wallet->balance) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Insufficient wallet balance.',
+            ], 422);
+        }
+
+        $settlement = WalletSettlementRequest::create([
+            'user_id' => Auth::id(),
+            'amount' => $request->amount,
+            'remark' => $request->remark,
+            'utr_no' => $request->utr_no,
+            'wallet_type' => $request->wallet_type,
+        ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Settlement request sent successfully.',
+            'data' => $settlement,
+        ]);
+    }
+
+    /**
+     * Settlement History
+     */
+    public function settlementRequests()
+    {
+        $requests = WalletSettlementRequest::with('approver:id,name')
+            ->where('user_id', Auth::id())
+            ->latest()
+            ->paginate(20);
+
+        $walletBalance = Wallet::where('user_id', Auth::id())
+            ->where('wallet_type', 'online')
+            ->value('balance') ?? 0;
+
+        return response()->json([
+            'status' => true,
+            'wallet_balance' => $walletBalance,
+            'requests' => $requests,
+        ]);
+    }
+
+    /**
+     * Amount Handover List
+     */
+    public function amountHandoverRequests()
+    {
+        $user = Auth::user();
+
+        $query = WalletSettlementRequest::with([
+            'approver:id,name',
+            'user:id,name'
+        ]);
+
+        if (in_array($user->role_type, ['admin', 'sub_admin'])) {
+
+            $query->where('user_id', '!=', $user->id);
+
+        } elseif ($user->role_type == 'branch') {
+
+            $employeeIds = User::where('branch_id', $user->id)
+                ->pluck('id');
+
+            $query->whereIn('user_id', $employeeIds);
+
+        } else {
+
+            $query->where('user_id', $user->id);
+        }
+
+        return response()->json([
+            'status' => true,
+            'requests' => $query->latest()->paginate(20),
+        ]);
+    }
+
+    /**
+     * Approve / Reject Handover
+     */
+    public function amountHandoverAction(
+        Request $request,
+        $id,
+        WalletService $walletService
+    ) {
+        $request->validate([
+            'status' => 'required|in:approved,rejected',
+            'reason' => 'nullable|string|max:500',
+            'type' => 'required|in:online,cash',
+        ]);
+
+        try {
+
+            DB::transaction(function () use (
+                $request,
+                $id,
+                $walletService
+            ) {
+
+                $handover = WalletSettlementRequest::findOrFail($id);
+
+                if ($handover->status != 'pending') {
+                    throw new \Exception('Already processed.');
+                }
+
+                $name = $handover->user->name ?? 'User';
+
+                if ($request->status == 'approved') {
+
+                    $debit = $walletService->debit(
+                        userId: $handover->user_id,
+                        amount: $handover->amount,
+                        walletType: $request->type,
+                        remark: 'Amount Handover Approved',
+                        requestId: $handover->id
+                    );
+
+                    if (!$debit['status']) {
+                        throw new \Exception($debit['message']);
+                    }
+
+                    $walletService->credit(
+                        userId: Auth::id(),
+                        amount: $handover->amount,
+                        leadId: null,
+                        walletType: $request->type,
+                        remark: 'Payment from ' . ucfirst($name) . ' Collection'
+                    );
+                }
+
+                $handover->update([
+                    'status' => $request->status,
+                    'reason' => $request->reason,
+                    'approved_by' => Auth::id(),
+                    'approved_at' => now(),
+                ]);
+            });
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Request updated successfully.',
+            ]);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+}
