@@ -5,7 +5,7 @@ import java.util.Arrays;
 public class SearchInString {
     public static void main(String[] args) {
         String name = "ArunKumar";
-        char terget = 'K';
+        char terget = 'L';
 
         System.out.println(search(name, terget));
         System.out.println(Arrays.toString(name.toCharArray()));

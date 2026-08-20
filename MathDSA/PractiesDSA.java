@@ -4,19 +4,91 @@ import java.util.Arrays;
 
 public class PractiesDSA {
     public static void main(String[] args) {
-        int arr[] = {3, 4, 4, 7, 8, 10};
- 
-        int  x =5;
+        int[] arr = {1,1,0,1,0,0,1,1};
+        int target =  10;
+        int high = arr.length -1;
 
-        // int result = findMaxElement(arr);
+         int result[] = fintFloorAndCeil(arr, target);
+        //int result = fintTargetRecIndex(arr,0,high, target);
+
+        System.out.println(Arrays.toString(MoveAllZerosToEnd(arr)));
 
         // System.out.println(result);
-       
-
-        int[] result = getFloorAndCeil(arr, x);
-
-        System.out.println(Arrays.toString(result));
     }
+
+
+
+    static int[] fintFloorAndCeil(int[] arr, int target){
+        int f = -1;
+        int c = -1;
+        int l = 0;
+        int h = arr.length -1;
+
+        while(l <= h){
+            int m = l+(h-l)/2;
+            if(arr[m] == target){
+                return new int[]{ f = target, c = target};
+            }
+
+            if(arr[m] > target){
+                h = m -1;
+                c = arr[m];
+            } else{
+                l = m + 1;
+                f = arr[m];
+            }
+
+        }
+
+        return new int[] {f,c};
+
+    }
+
+    static int fintTargetRecIndex( int[] arr,int low, int high, int target){
+
+          if(low > high){
+            return -1;
+          }
+          int mid = low +(high -low)/2;
+          
+          if(arr[mid] == target){
+             return mid;
+          }
+
+          if(arr[mid] < target){
+            return fintTargetRecIndex(arr, mid +1, high, target);
+          }
+
+          return fintTargetRecIndex(arr, low, mid -1 , target);
+    }
+
+
+
+    static int fintTargetIndex( int[] arr, int target){
+        int low = 0;
+        int high = arr.length -1;
+         int ans = arr.length;
+
+        while(low <= high){
+            int mid = low + (high - low)/ 2;
+
+            if(arr[mid] == target){
+                // return mid;
+                ans = mid;
+            }
+           
+            if(arr[mid] < target){
+                low = mid + 1;
+            } else {
+                ans = mid;
+                high = mid -1;
+            }
+
+        }
+
+        return ans;
+    }
+
 
      static  int[] getFloorAndCeil(int[] nums, int x) {
         int floorValue = 0;
